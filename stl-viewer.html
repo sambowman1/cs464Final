@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <title>Hello WebGL</title>
+    <meta name="generator" content="BBEdit 10.5" />
+
+    <!-- load matrix manipulation helper methods -->
+    <script type="text/javascript" src="glMatrix_util.js"></script>
+    <script type="text/javascript" src="webgl-utils.js"></script>
+
+    <style>
+        body {
+            text-align: center;
+        }
+
+        canvas {
+            display: inline-block;
+            width: 1024px;
+            height: 576px;
+            margin: 0;
+            padding: 0;
+            border: none;
+        }
+    </style>
+
+    <!-- define our shaders -->
+    <script id="shader-fs" type="x-shader/x-fragment">
+    precision mediump float;
+   
+    varying vec3 vLightWeighting;
+    
+    void main(void) {
+        //specify one color for all vertices
+        vec4 testcolor = vec4(0.2, 1.0, 0.2, 1.0);
+        //gl_FragColor = vec4(vColor.rgb * vLightWeighting, vColor.a);
+        gl_FragColor = vec4(testcolor.rgb * vLightWeighting, testcolor.a);
+    }
+
+</script>
+
+    <script id="shader-vs" type="x-shader/x-vertex">
+    
+    attribute vec3 aVertexPosition;
+    attribute vec3 aVertexNormal;
+       
+    uniform mat4 uMVMatrix;
+    uniform mat4 uPMatrix;
+    uniform mat3 uNMatrix;
+    
+    uniform vec3 uAmbientColor;
+    uniform vec3 uLightingDirection;
+    uniform vec3 uDirectionalColor;
+    varying vec3 vLightWeighting;
+
+    void main(void) {
+        gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
+        
+        vec3 transformedNormal = uNMatrix * aVertexNormal;
+        float directionalLighting = max(dot(transformedNormal, uLightingDirection), 0.0);
+        vLightWeighting = uAmbientColor + uDirectionalColor * directionalLighting;
+    }
+</script>
+
+
+    <script>
+
+        var gl;
+
+
+        function initWebGLContext(aname) {
+            gl = null;
+            var canvas = document.getElementById(aname);
+            canvas.width = canvas.clientWidth;
+            canvas.height = canvas.clientHeight;
+            try {
+                // Try to grab the standard context. If it fails, fallback to experimental.
+                gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+            }
+            catch (e) { }
+
+            // If we don't have a GL context, give up now
+            if (!gl) {
+                alert("Unable to initialize WebGL. Your browser may not support it.");
+                gl = null;
+            }
+            gl.viewportWidth = canvas.width;
+            gl.viewportHeight = canvas.height;
+            return gl;
+        }
+        // define the function to initial WebGL and Setup Geometry Objects
+        function initGLScene() {
+            // Initialize the WebGL Context - the gl engine for drawing things.
+            var gl = initWebGLContext("hellowebgl"); // The id of the Canvas Element
+            if (!gl) // if fails simply return
+            {
+                return;
+            }
+            // succeeded in initializing WebGL system
+            return gl;
+        }
+
+
+        function getShader(gl, id) {
+            var shaderScript = document.getElementById(id);
+            if (!shaderScript) {
+                return null;
+            }
+
+            var str = "";
+            var k = shaderScript.firstChild;
+            while (k) {
+                if (k.nodeType == 3) {
+                    str += k.textContent;
+                }
+                k = k.nextSibling;
+            }
+
+            var shader;
+            if (shaderScript.type == "x-shader/x-fragment") {
+                shader = gl.createShader(gl.FRAGMENT_SHADER);
+            } else if (shaderScript.type == "x-shader/x-vertex") {
+                shader = gl.createShader(gl.VERTEX_SHADER);
+            } else {
+                return null;
+            }
+
+            gl.shaderSource(shader, str);
+            gl.compileShader(shader);
+
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                alert(gl.getShaderInfoLog(shader));
+                return null;
+            }
+
+            return shader;
+        }
+
+        var shaderProgram;
+
+        function initShaders() {
+            var fragmentShader = getShader(gl, "shader-fs");
+            var vertexShader = getShader(gl, "shader-vs");
+
+            shaderProgram = gl.createProgram();
+            gl.attachShader(shaderProgram, vertexShader);
+            gl.attachShader(shaderProgram, fragmentShader);
+            gl.linkProgram(shaderProgram);
+
+            if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+                alert("Could not initialise shaders");
+            }
+
+            gl.useProgram(shaderProgram);
+
+            shaderProgram.vertexPositionAttribute = gl.getAttribLocation(shaderProgram, "aVertexPosition");
+            gl.enableVertexAttribArray(shaderProgram.vertexPositionAttribute);
+
+            // shaderProgram.vertexColorAttribute = gl.getAttribLocation(shaderProgram, "aVertexColor");
+            // gl.enableVertexAttribArray(shaderProgram.vertexColorAttribute);
+
+            shaderProgram.vertexNormalAttribute = gl.getAttribLocation(shaderProgram, "aVertexNormal");
+            gl.enableVertexAttribArray(shaderProgram.vertexNormalAttribute);
+
+            // shaderProgram.textureCoordAttribute = gl.getAttribLocation(shaderProgram, "aTextureCoord");
+            // gl.enableVertexAttribArray(shaderProgram.textureCoordAttribute);
+
+            shaderProgram.pMatrixUniform = gl.getUniformLocation(shaderProgram, "uPMatrix");
+            shaderProgram.mvMatrixUniform = gl.getUniformLocation(shaderProgram, "uMVMatrix");
+            // shaderProgram.samplerUniform = gl.getUniformLocation(shaderProgram, "uSampler");
+
+            shaderProgram.nMatrixUniform = gl.getUniformLocation(shaderProgram, "uNMatrix");
+            // shaderProgram.useLightingUniform = gl.getUniformLocation(shaderProgram, "uUseLighting");
+            shaderProgram.ambientColorUniform = gl.getUniformLocation(shaderProgram, "uAmbientColor");
+            shaderProgram.lightingDirectionUniform = gl.getUniformLocation(shaderProgram, "uLightingDirection");
+            shaderProgram.directionalColorUniform = gl.getUniformLocation(shaderProgram, "uDirectionalColor");
+        }
+
+        // create our basic model and view matrix
+        var mvMatrix = mat4.create();
+        var mvMatrixStack = [];
+        // create our projection matrix for projecting from 3D to 2D.
+        var pMatrix = mat4.create();
+
+        function mvPushMatrix() {
+            var copy = mat4.create();
+            mat4.set(mvMatrix, copy);
+            mvMatrixStack.push(copy);
+        }
+
+        function mvPopMatrix() {
+            if (mvMatrixStack.length == 0) {
+                throw "Invalid popMatrix!";
+            }
+            mvMatrix = mvMatrixStack.pop();
+        }
+
+        function setMatrixUniforms() {
+            gl.uniformMatrix4fv(shaderProgram.pMatrixUniform, false, pMatrix);
+            gl.uniformMatrix4fv(shaderProgram.mvMatrixUniform, false, mvMatrix);
+
+            var normalMatrix = mat3.create();
+            mat4.toInverseMat3(mvMatrix, normalMatrix);
+            mat3.transpose(normalMatrix);
+            gl.uniformMatrix3fv(shaderProgram.nMatrixUniform, false, normalMatrix);
+        }
+        var geoVertexPositionBuffer;
+        var geoVertexIndexBuffer;
+        var normalBuffer, colorBuffer;
+
+        var file;
+        var triangles;
+        var vertices, nvertices;
+        var vertices1, nvertices1, ivertices;
+        var stl;
+        var reader;
+        var dataview;
+        var reader;
+        var x_move, y_move, z_move;
+
+        ///////////////////////////////////////////////////////
+        //load file
+        ///////////////////////////////////////////////////////
+
+
+
+        function openFile() {
+
+
+            reader = new FileReader();
+            reader.onload = function (e) {
+                var arrayBuffer = reader.result;
+                readstl();
+            }
+            reader.readAsArrayBuffer(file);
+        }
+
+        function readstl() {
+            vertices1 = [];
+            nvertices1 = [];
+            ivertices = [];
+
+            var dataview = new DataView(stl, 80);
+            triangles = dataview.getUint32(0, true);
+            var vi = 0;
+            var position = 4;
+            for (var i = 0; i < triangles; i++) {
+                nvertices1[i * 9 + 0] = dataview.getFloat32(position, true);
+                nvertices1[i * 9 + 1] = dataview.getFloat32(position + 4, true);
+                nvertices1[i * 9 + 2] = dataview.getFloat32(position + 8, true);
+                nvertices1[i * 9 + 3] = dataview.getFloat32(position, true);
+                nvertices1[i * 9 + 4] = dataview.getFloat32(position + 4, true);
+                nvertices1[i * 9 + 5] = dataview.getFloat32(position + 8, true);
+                nvertices1[i * 9 + 6] = dataview.getFloat32(position, true);
+                nvertices1[i * 9 + 7] = dataview.getFloat32(position + 4, true);
+                nvertices1[i * 9 + 8] = dataview.getFloat32(position + 8, true);
+                position += 12;
+                //vertex1
+                vertices1[i * 9 + 0] = dataview.getFloat32(position, true);
+                vertices1[i * 9 + 1] = dataview.getFloat32(position + 4, true);
+                vertices1[i * 9 + 2] = dataview.getFloat32(position + 8, true);
+                position += 12;
+                //vertex2
+                vertices1[i * 9 + 3] = dataview.getFloat32(position, true);
+                vertices1[i * 9 + 4] = dataview.getFloat32(position + 4, true);
+                vertices1[i * 9 + 5] = dataview.getFloat32(position + 8, true);
+                position += 12;
+                //vertex3
+                vertices1[i * 9 + 6] = dataview.getFloat32(position, true);
+                vertices1[i * 9 + 7] = dataview.getFloat32(position + 4, true);
+                vertices1[i * 9 + 8] = dataview.getFloat32(position + 8, true);
+                position += 14;
+
+                //just convenient to make indices in this loop
+                ivertices[vi++] = i * 3 + 0;
+                ivertices[vi++] = i * 3 + 1;
+                ivertices[vi++] = i * 3 + 2;
+               
+            }
+            //for centering view
+            x_move = vertices1[0];
+            y_move = vertices1[1];
+            z_move = vertices1[2];
+            // console.log("vertices size: " + vertices1.length);
+            // console.log(vertices1);
+
+            geoVertexPositionBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, geoVertexPositionBuffer);
+
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices1), gl.STATIC_DRAW);
+            geoVertexPositionBuffer.itemSize = 3;
+            geoVertexPositionBuffer.numItems = 3 * triangles;
+
+            normalBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(nvertices1), gl.STATIC_DRAW);
+            normalBuffer.itemSize = 3;
+            normalBuffer.numItems =3 * triangles;
+
+            geoVertexIndexBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, geoVertexIndexBuffer);
+
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(ivertices), gl.STATIC_DRAW);
+            geoVertexIndexBuffer.itemSize = 1;
+            geoVertexIndexBuffer.numItems = vi;
+
+            // console.log("nvertices size: " + nvertices1.length);
+            // console.log(nvertices1);
+            // console.log("ivertices size: " + ivertices.length);
+            // console.log(ivertices);
+            Frames();
+            Frames2();
+        }
+
+
+        
+        //Initialize everything for starting up a simple webGL application
+        function startHelloWebGL() {
+
+            // attach 'Handler' functions to handle events generated by the canvas.
+            // for when the browser is resized or closed.
+
+            // first initialize webgl components
+            var gl = initGLScene();
+
+            // now build basic geometry objects.
+            initShaders();
+            //initGeometry();
+            //initTextures();
+            // dropzone();
+
+
+            // openFile();
+            var xhr = new XMLHttpRequest();
+            xhr.onreadystatechange = function () {
+                if (xhr.readyState == 4) {
+                    if (xhr.status == 200 || xhr.status == 0) {
+                        var rep = xhr.response;
+                        //console.log(rep);
+                        stl = rep;
+                        readstl();
+                    }
+                }
+            }
+            xhr.open("GET", 'finnyshuttle2.stl', true);
+            xhr.responseType = "arraybuffer";
+            xhr.send(null);
+
+
+            //mouse stuff
+            var acanvas = document.getElementById("hellowebgl");
+            document.onmousedown = handleMouseDown;
+            document.onmouseup = handleMouseUp;
+            document.onmousemove = handleMouseMove;
+            acanvas.onwheel = handleMouseWheel;
+
+            gl.clearColor(0.4, 0.4, 0.4, 1.0);
+            gl.enable(gl.DEPTH_TEST);
+            // Draw the Scene
+
+            // If doing an animation need to add code to rotate our geometry
+
+        }
+
+        var mouseDown = false;
+        var lastMouseX = null;
+        var lastMouseY = null;
+        var toggle = false;
+
+        var objRotationMatrix = mat4.create();
+        mat4.identity(objRotationMatrix);
+
+        function handleMouseDown(event) {
+
+            mouseDown = true;
+            lastMouseX = event.clientX;
+            lastMouseY = event.clientY;
+            // console.log("Down" + event.clientX);
+            toggle = !toggle;
+            if (toggle){
+                thing = 1;
+            } else {
+                thing = 0;
+            }
+
+        }
+
+        function handleMouseUp(event) {
+            mouseDown = false;
+            // console.log("up");
+        }
+
+        function handleMouseMove(event) {
+            if (!mouseDown) {
+                return;
+            }
+            //console.log(event.clientX);
+            var newX = event.clientX;
+            var newY = event.clientY;
+
+            var newRotationMatrix = mat4.create();
+            mat4.identity(newRotationMatrix);
+
+            var deltaX = newX - lastMouseX;
+            mat4.rotate(newRotationMatrix, degToRad(deltaX / 10.0), [0, 1, 0]);
+            //console.log(degToRad(deltaX / 10.0));
+
+            var deltaY = newY - lastMouseY;
+            mat4.rotate(newRotationMatrix, degToRad(deltaY / 10.0), [1, 0, 0]);
+
+            mat4.multiply(newRotationMatrix, objRotationMatrix, objRotationMatrix);
+            //console.log(mvMatrix);
+
+            lastMouseX = newX;
+            lastMouseY = newY;
+        }
+
+        var objZoomMatrix = mat4.create();
+        mat4.identity(objZoomMatrix);
+        var lastWheelY = 0;
+
+        function handleMouseWheel(event) {
+            event.preventDefault();
+            // console.log(event.deltaY);
+            var newZoomMatrix = mat4.create();
+            mat4.identity(newZoomMatrix);
+
+            var deltaY = 1 - .2 * (event.deltaY / Math.abs(event.deltaY));
+            // var newY = lastWheelY + -1 * degToRad(deltaY / 10);
+            // console.log(deltaY);
+            mat4.scale(newZoomMatrix, [deltaY, deltaY, deltaY]);
+            mat4.multiply(newZoomMatrix, objZoomMatrix, objZoomMatrix);
+            lastWheelY -= deltaY;
+        }
+
+
+        function degToRad(deg) {
+            return deg * Math.PI / 180.0;
+        }
+
+        // This function draws a basic webGL scene
+        // first it clears the framebuffer.
+        // then we define our View positions for our camera using WebGL matrices.
+        // OpenGL has convenience methods for this such as glPerspective().
+        // finally we call the gl draw methods to draw our defined geometry objects.
+          var xRot = 0;
+          var yRot = 0;
+          var zRot = 0;
+          var thing = 0;
+
+        function drawScene() {
+            gl.viewport(512, 0, 512, gl.viewportHeight);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+            mat4.perspective(45, 512 / gl.viewportHeight, 0.1, 100.0, pMatrix);
+
+            mat4.identity(mvMatrix);
+            mat4.translate(mvMatrix, [0, 0, -z_move-50]);
+
+            mat4.rotate(mvMatrix, xRot/360.0*3.1415, [0, 0, 0]);
+            mat4.rotate(mvMatrix, yRot/360.0*3.1415, [0, thing, 0]);
+            mat4.rotate(mvMatrix, zRot/360.0*3.1415, [0, 0, 0]);
+
+            mat4.multiply(mvMatrix, objRotationMatrix, mvMatrix);
+            mat4.multiply(mvMatrix, objZoomMatrix, mvMatrix);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, geoVertexPositionBuffer);
+            gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, geoVertexPositionBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+            gl.vertexAttribPointer(shaderProgram.vertexNormalAttribute, normalBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+            gl.uniform1i(shaderProgram.useLightingUniform, 1);
+
+            gl.uniform3f(
+                shaderProgram.ambientColorUniform,
+                //1, 1, 1
+                0.4, 0.4, 0.4 
+            );
+
+            var lightingDirection = [
+                //-.25, -.25, -.25
+                // 0, 0, 0
+                -.5, -.5, -.25
+            ];
+
+            var adjustedLD = vec3.create();
+            vec3.normalize(lightingDirection, adjustedLD);
+            vec3.scale(adjustedLD, -1);
+            gl.uniform3fv(shaderProgram.lightingDirectionUniform, adjustedLD);
+
+            gl.uniform3f(
+                shaderProgram.directionalColorUniform,
+                0.8, 0.8, 0.8
+            );
+
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, geoVertexIndexBuffer);
+            setMatrixUniforms();
+            gl.drawElements(gl.TRIANGLES, geoVertexIndexBuffer.numItems, gl.UNSIGNED_SHORT, 0);
+        }
+
+        function drawScene2() {
+            gl.viewport(0, 0, 512, gl.viewportHeight);
+            //gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+            mat4.perspective(45, 512 / gl.viewportHeight, 0.1, 100.0, pMatrix);
+
+            mat4.identity(mvMatrix);
+            mat4.translate(mvMatrix, [0, 0, -z_move-50]);
+
+            mat4.rotate(mvMatrix, xRot/360.0*3.1415, [0, 0, 0]);
+            mat4.rotate(mvMatrix, yRot/360.0*3.1415, [0, thing, 0]);
+            mat4.rotate(mvMatrix, zRot/360.0*3.1415, [0, 0, 0]);
+
+            mat4.multiply(mvMatrix, objRotationMatrix, mvMatrix);
+            mat4.multiply(mvMatrix, objZoomMatrix, mvMatrix);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, geoVertexPositionBuffer);
+            gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, geoVertexPositionBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+            gl.vertexAttribPointer(shaderProgram.vertexNormalAttribute, normalBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+            gl.uniform1i(shaderProgram.useLightingUniform, 1);
+
+            gl.uniform3f(
+                shaderProgram.ambientColorUniform,
+                //1, 1, 1
+                0.4, 0.4, 0.4
+            );
+
+            var lightingDirection = [
+                //-.25, -.25, -.25
+                // 0, 0, 0
+                -.5, -.5, -.25
+            ];
+
+            var adjustedLD = vec3.create();
+            vec3.normalize(lightingDirection, adjustedLD);
+            vec3.scale(adjustedLD, -1);
+            gl.uniform3fv(shaderProgram.lightingDirectionUniform, adjustedLD);
+
+            gl.uniform3f(
+                shaderProgram.directionalColorUniform,
+                0.8, 0.8, 0.8
+            );
+
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, geoVertexIndexBuffer);
+            setMatrixUniforms();
+            gl.drawElements(gl.TRIANGLES, geoVertexIndexBuffer.numItems, gl.UNSIGNED_SHORT, 0);
+        }
+
+
+        var lastTime = 0;
+
+        function animate() {
+            var timeNow = new Date().getTime();
+            if (lastTime != 0) {
+                var elapsed = timeNow - lastTime;
+
+                 xRot += (90 * elapsed) / 1000.0;
+                 yRot += (90 * elapsed) / 1000.0;
+                 zRot += (90 * elapsed) / 1000.0;
+            }
+            lastTime = timeNow;
+        }
+
+
+        function Frames() {
+            requestAnimFrame(Frames);
+            drawScene();
+            animate();
+        }
+
+        function Frames2() {
+            requestAnimFrame(Frames2);
+            drawScene2();
+            animate();
+        }
+    </script>
+    <script>
+        function dropzone() {
+            // console.log("test");
+            // var dropZone;
+
+            // Setup the dnd listeners.
+            // console.log("it's happening")
+            var dropZone = document.getElementById('drop_zone');
+            //if (dropZone){
+            dropZone.addEventListener('dragover', handleDragOver, false);
+            dropZone.addEventListener('drop', handleFileSelect, false);
+            // }
+
+        }
+        function handleFileSelect(evt) {
+            evt.stopPropagation();
+            evt.preventDefault();
+
+            var files = evt.dataTransfer.files; // FileList object.
+
+            // files is a FileList of File objects. List some properties.
+            // var output = [];
+            // for (var i = 0, f; f = files[i]; i++) {
+            //     output.push('<li><strong>', escape(f.name), '</strong> (', f.type || 'n/a', ') - ',
+            //                 f.size, ' bytes, last modified: ',
+            //                 f.lastModifiedDate ? f.lastModifiedDate.toLocaleDateString() : 'n/a',
+            //                 '</li>');
+            // }
+            // document.getElementById('list').innerHTML = '<ul>' + output.join('') + '</ul>';
+            console.log(files[0].name)
+            file = files[0];
+            openFile();
+
+
+        }
+
+        function handleDragOver(evt) {
+            evt.stopPropagation();
+            evt.preventDefault();
+            evt.dataTransfer.dropEffect = 'copy'; // Explicitly show this is a copy.
+        }
+    </script>
+
+    <link rel="stylesheet" type="text/css" href="stl.css" />
+
+</head>
+
+<!-- declare the "body" of the HTML document-->
+<!-- the onload attribute specifies a javascript function to execute when the body tag is loaded into the browser -->
+
+<body style="margin: 0; width:100%; height: 100%;" onload="startHelloWebGL()">
+
+
+    <!-- <div class="example">
+        <!-- <div id="drop_zone">Drop STL here</div>
+        <output id="list"></output>
+    </div> -->
+
+
+
+    <!-- embed the HTML5 Canvas Drawing object on the page.-->
+    <!-- Name the canvas 'hellowebgl' for the javascript code. -->
+    <div>
+    <div style="position: absolute;">
+    <canvas style="" id="hellowebgl" width=1024 height=576>
+        If you're seeing this your web browser doesn't support the &lt;canvas>&gt; element. Ouch!
+    </canvas>
+    </div>
+
+    <div style="position: absolute;">
+        <img src="blackborder.png" alt="BlackBorder">
+    </div>
+    </div>
+
+
+</body>
+
+</html>
